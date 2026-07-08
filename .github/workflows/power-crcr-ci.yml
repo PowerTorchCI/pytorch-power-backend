@@ -1,4 +1,4 @@
-name: PyTorch POWER L1 Dispatch
+name: PyTorch POWER Backend CI
 
 on:
   pull_request:
@@ -23,7 +23,7 @@ on:
       - push
 
 run-name: >-
-  POWER L1 -
+  POWER Backend CI -
   ${{
     github.event.client_payload.event_type == 'pull_request' &&
     format(
