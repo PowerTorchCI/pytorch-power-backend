@@ -43,6 +43,7 @@ concurrency:
 permissions:
   actions: write
   contents: read
+  id-token: write
 
 jobs:
   cancel-workflow:
@@ -81,6 +82,11 @@ jobs:
           ref: ${{ steps.upstream.outputs.sha }}
           path: pytorch
           submodules: recursive
+
+      - name: Report in_progress to PyTorch HUD
+        uses: pytorch/test-infra/.github/actions/cross-repo-ci-relay-callback@main
+        with:
+          status: in_progress
 
       - name: Log dispatch summary
         shell: bash
@@ -166,10 +172,13 @@ jobs:
           ENDSSH
 
       - name: Build PyTorch on Power LPAR
+        id: build
+        continue-on-error: true
         shell: bash
         run: |
-          set -euxo pipefail
-          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH'
+          set -euo pipefail
+          BUILD_EXIT=0
+          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH' || BUILD_EXIT=$?
           set -euxo pipefail
           cd ${{ env.REMOTE_WORK_DIR }}
           . .venv/bin/activate
@@ -189,12 +198,24 @@ jobs:
           echo "Build complete. Wheel files:"
           ls -lh dist/
           ENDSSH
+          
+          echo "build_exit_code=$BUILD_EXIT" >> "$GITHUB_OUTPUT"
+          if [ $BUILD_EXIT -eq 0 ]; then
+            echo "build_status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_status=failure" >> "$GITHUB_OUTPUT"
+          fi
+          exit $BUILD_EXIT
 
       - name: Run tests on Power LPAR
+        id: tests
+        if: steps.build.outputs.build_status == 'success'
+        continue-on-error: true
         shell: bash
         run: |
-          set -euxo pipefail
-          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH'
+          set -euo pipefail
+          TEST_EXIT=0
+          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH' || TEST_EXIT=$?
           set -euxo pipefail
           cd ${{ env.REMOTE_WORK_DIR }}
           . .venv/bin/activate
@@ -207,6 +228,19 @@ jobs:
           print("Smoke test passed!")
           PY
           ENDSSH
+          
+          if [ $TEST_EXIT -eq 0 ]; then
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+            echo "passed=1" >> "$GITHUB_OUTPUT"
+            echo "failed=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+            echo "passed=0" >> "$GITHUB_OUTPUT"
+            echo "failed=1" >> "$GITHUB_OUTPUT"
+          fi
+          echo "skipped=0" >> "$GITHUB_OUTPUT"
+          echo "total=1" >> "$GITHUB_OUTPUT"
+          exit $TEST_EXIT
 
       - name: Copy artifacts back from Power LPAR
         shell: bash
@@ -238,3 +272,85 @@ jobs:
           name: power-l1-wheel-${{ github.run_id }}
           path: artifacts/*.whl
           if-no-files-found: warn
+
+      - name: Log build and test results
+        if: always()
+        run: |
+          echo "## Build and Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          BUILD_STATUS="${{ steps.build.outputs.build_status }}"
+          TEST_OUTCOME="${{ steps.tests.outputs.outcome }}"
+          
+          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+          if [ "$BUILD_STATUS" = "success" ]; then
+            echo "✅ **Build**: PASSED" >> $GITHUB_STEP_SUMMARY
+          elif [ "$BUILD_STATUS" = "failure" ]; then
+            echo "❌ **Build**: FAILED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Build**: UNKNOWN" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Status" >> $GITHUB_STEP_SUMMARY
+          if [ "$BUILD_STATUS" != "success" ]; then
+            echo "⏭️ **Tests**: SKIPPED (build failed)" >> $GITHUB_STEP_SUMMARY
+          elif [ "$TEST_OUTCOME" = "success" ]; then
+            echo "✅ **Tests**: PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "- Passed: ${{ steps.tests.outputs.passed || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Failed: ${{ steps.tests.outputs.failed || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Skipped: ${{ steps.tests.outputs.skipped || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Total: ${{ steps.tests.outputs.total || 0 }}" >> $GITHUB_STEP_SUMMARY
+          elif [ "$TEST_OUTCOME" = "failure" ]; then
+            echo "❌ **Tests**: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "- Passed: ${{ steps.tests.outputs.passed || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Failed: ${{ steps.tests.outputs.failed || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Skipped: ${{ steps.tests.outputs.skipped || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Total: ${{ steps.tests.outputs.total || 0 }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Tests**: NOT RUN" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Determine final conclusion
+        if: always()
+        id: conclusion
+        run: |
+          BUILD_STATUS="${{ steps.build.outputs.build_status }}"
+          TEST_OUTCOME="${{ steps.tests.outputs.outcome }}"
+          
+          # If build failed, conclusion is failure
+          if [ "$BUILD_STATUS" = "failure" ]; then
+            echo "conclusion=failure" >> "$GITHUB_OUTPUT"
+            echo "reason=Build failed" >> "$GITHUB_OUTPUT"
+          # If build succeeded but tests failed, conclusion is failure
+          elif [ "$TEST_OUTCOME" = "failure" ]; then
+            echo "conclusion=failure" >> "$GITHUB_OUTPUT"
+            echo "reason=Tests failed" >> "$GITHUB_OUTPUT"
+          # If build succeeded and tests succeeded (or were skipped), conclusion is success
+          elif [ "$BUILD_STATUS" = "success" ] && [ "$TEST_OUTCOME" = "success" ]; then
+            echo "conclusion=success" >> "$GITHUB_OUTPUT"
+            echo "reason=Build and tests passed" >> "$GITHUB_OUTPUT"
+          # Fallback to job status
+          else
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "conclusion=success" >> "$GITHUB_OUTPUT"
+            else
+              echo "conclusion=failure" >> "$GITHUB_OUTPUT"
+            fi
+            echo "reason=Determined from job status" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report completed to PyTorch HUD
+        if: always()
+        uses: pytorch/test-infra/.github/actions/cross-repo-ci-relay-callback@main
+        with:
+          status: completed
+          conclusion: ${{ steps.conclusion.outputs.conclusion }}
+          test-results: >-
+            {
+              "passed": ${{ steps.tests.outputs.passed || 0 }},
+              "failed": ${{ steps.tests.outputs.failed || 0 }},
+              "skipped": ${{ steps.tests.outputs.skipped || 0 }},
+              "total": ${{ steps.tests.outputs.total || 0 }}
+            }
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
