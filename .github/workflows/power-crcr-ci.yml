@@ -128,7 +128,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat /etc/ssh/ssh_host_ed25519_key.pub
+          cat ~/.ssh/id_ed25519.pub
           mkdir -p ~/.ssh
           echo "${{ secrets.POWER_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
