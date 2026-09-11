@@ -340,18 +340,3 @@ jobs:
             fi
             echo "reason=Determined from job status" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Report completed to PyTorch HUD
-        if: always()
-        uses: pytorch/test-infra/.github/actions/cross-repo-ci-relay-callback@main
-        with:
-          status: completed
-          conclusion: ${{ steps.conclusion.outputs.conclusion }}
-          test-results: >-
-            {
-              "passed": ${{ steps.tests.outputs.passed || 0 }},
-              "failed": ${{ steps.tests.outputs.failed || 0 }},
-              "skipped": ${{ steps.tests.outputs.skipped || 0 }},
-              "total": ${{ steps.tests.outputs.total || 0 }}
-            }
-          artifact-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
