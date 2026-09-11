@@ -1,6 +1,6 @@
 # PyTorch POWER Backend CI/CD
 
-This repository contains the GitHub Actions workflow for building and testing PyTorch on IBM POWER architecture (ppc64le) with full integration to the PyTorch HUD (Heads-Up Display) via the Cross-Repository CI Relay (CRCR) system. 
+This repository contains the GitHub Actions workflow for building and testing PyTorch on IBM POWER architecture (ppc64le) with full integration to the PyTorch HUD (Heads-Up Display) via the Cross-Repository CI Relay (CRCR) system.
 
 ## Architecture Overview
 
