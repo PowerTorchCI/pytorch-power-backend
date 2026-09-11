@@ -118,13 +118,15 @@ jobs:
             .
           cd ..
           ls -lh pytorch-source.tar.gz
-
+      
       - name: Setup SSH key
         shell: bash
         run: |
           set -euo pipefail
           cat ~/.ssh/id_ed25519.pub
           mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub
           echo "${{ secrets.POWER_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ env.POWER_HOST }} >> ~/.ssh/known_hosts
