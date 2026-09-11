@@ -83,11 +83,6 @@ jobs:
           path: pytorch
           submodules: recursive
 
-      - name: Report in_progress to PyTorch HUD
-        uses: pytorch/test-infra/.github/actions/cross-repo-ci-relay-callback@main
-        with:
-          status: in_progress
-
       - name: Log dispatch summary
         shell: bash
         run: |
