@@ -10,18 +10,12 @@ The CI/CD pipeline uses a hybrid approach to work around GitHub Actions' lack of
 GitHub Event (repository_dispatch from pytorch/pytorch)
       │
       ▼
-GitHub-hosted ubuntu-latest
+Self Hosted PPC64 Machine
       │
-      ├── Report in_progress to HUD ✨
+      ├── Checkout this Downstream repo
       ├── Checkout PyTorch
-      ├── Archive source
-      ├── Copy source to Power LPAR (scp/rsync)
-      ├── ssh ailiblpar1
-      │      ├── Extract source
-      │      ├── Create venv
-      │      ├── Build PyTorch
-      │      └── Run tests
-      ├── Copy artifacts back
+      ├── Build Power Whell and Run Tests
+      ├── Upload artifcats and test results
       └── Report completed to HUD ✨
             │
             ▼
@@ -47,7 +41,7 @@ CRCR Webhook Lambda (checks allowlist)
     ↓
 repository_dispatch → TorchPowerCI/pytorch-power-backend
     ↓
-Workflow runs on POWER LPAR
+Workflow runs on self hosted POWER machine
     ↓
 Callbacks (in_progress → completed) → CRCR Callback Lambda
     ↓
@@ -78,26 +72,15 @@ https://hud.pytorch.org/api/clickhouse/crcr_pr_results?parameters=%7B%22pr%22%3A
 
 The workflow (`power-crcr-ci.yml`) performs the following steps:
 
-1. **GitHub-hosted Runner (ubuntu-latest)**:
+1. **Self-hosted PPC64 Runner**:
    - Receives `repository_dispatch` event from pytorch/pytorch
-   - **Reports `in_progress` status to HUD** 🆕
    - Checks out the PyTorch source code at the dispatched SHA
-   - Archives the source into a tarball
-   - Transfers the archive to the Power LPAR via SCP
+   - Create virtual environment for PyTorch build
+   - Build PyTorch and Run Tests
+   - Runs smoke Test
+   - Collect test results
+   - Uploads build artifacts to GitHub Actions
 
-2. **Power LPAR (via SSH)**:
-   - Extracts the source code
-   - Creates a Python virtual environment
-   - Installs dependencies
-   - Builds PyTorch wheel
-   - Runs smoke tests
-   - Collects test results (passed/failed/skipped counts)
-
-3. **GitHub-hosted Runner (ubuntu-latest)**:
-   - Copies build artifacts back from Power LPAR
-   - Uploads artifacts to GitHub Actions
-   - Cleans up remote workspace
-   - **Reports `completed` status with test results to HUD** 🆕
 
 ## Prerequisites
 
@@ -160,13 +143,6 @@ The Power LPAR must have:
 - Git (for submodules)
 - Sufficient disk space (~10GB recommended)
 
-## Environment Variables
-
-The workflow uses:
-
-- `POWER_HOST`: Hostname of the Power LPAR (default: `ailiblpar1.pperf.tadn.ibm.com`)
-- `REMOTE_WORK_DIR`: Temporary directory on the Power LPAR
-- `PYTORCH_REPO_URL`: URL of the PyTorch repository
 
 ## Triggering the Workflow
 
