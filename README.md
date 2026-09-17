@@ -234,9 +234,10 @@ ssh: connect to host ailiblpar1.pperf.tadn.ibm.com port 22: Connection timed out
    - More complex but maintains security
 
 **Current Status:**
-- ❌ Workflow fails at SSH connection step
-- ✅ Workflow structure and HUD integration are correct
-- ⏳ Requires self-hosted runner or network configuration
+- ❌ Configured a self hosted ppc64 runner.
+- Testing if the CI flow runs on slef hiosted machine
+- Next - Test if Workflow structure and HUD integration are correct
+
 
 **Troubleshooting Steps:**
 - Verify `POWER_SSH_USER` and `POWER_SSH_PRIVATE_KEY` secrets are set
