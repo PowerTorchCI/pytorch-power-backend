@@ -48,23 +48,20 @@ permissions:
 jobs:
   cancel-workflow:
     if: ${{ github.event.client_payload.payload.action == 'closed' }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: PR closed
         run: echo "PR closed, allowing concurrency cancellation to stop older runs"
 
   power-build-and-test:
     if: ${{ github.event.client_payload.payload.action != 'closed' }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     env:
       PYTORCH_REPO_URL: https://github.com/pytorch/pytorch.git
-      POWER_HOST: ailiblpar1.pperf.tadn.ibm.com
-      POWER_USER: ${{ secrets.POWER_SSH_USER }}
-      REMOTE_WORK_DIR: /tmp/pytorch-ci-${{ github.run_id }}
 
     steps:
-      - name: Checkout POWER backend repository
+      - name: Checkout POWER downstream repository
         uses: actions/checkout@v4
 
       - name: Resolve upstream SHA
@@ -93,91 +90,37 @@ jobs:
           - Action: `${{ github.event.client_payload.payload.action || 'n/a' }}`
           - Upstream repo: `${{ github.event.client_payload.payload.repository.full_name }}`
           - Upstream SHA: `${{ steps.upstream.outputs.sha }}`
-          - Runner host: `${{ env.POWER_HOST }}`
-          - Remote work directory: `${{ env.REMOTE_WORK_DIR }}`
+          - Runner: `${{ runner.name }}`
+          - Runner OS: `${{ runner.os }}`
+          - Runner architecture: `${{ runner.arch }}`
 
           ### Raw event
           ```json
           ${{ toJson(github.event) }}
           ```
           SUMMARY
-
-      - name: Archive PyTorch source
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cd pytorch
-          tar -czf ../pytorch-source.tar.gz \
-            --exclude='.git' \
-            --exclude='*.pyc' \
-            --exclude='__pycache__' \
-            --exclude='.venv' \
-            --exclude='venv' \
-            --exclude='build' \
-            --exclude='dist' \
-            .
-          cd ..
-          ls -lh pytorch-source.tar.gz
       
-      - name: Setup SSH key
+      - name: Create Python virtual environment
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
-          cat ~/.ssh/id_ed25519.pub
-          echo "${{ secrets.POWER_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ env.POWER_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Copy source to Power LPAR
-        shell: bash
-        run: |
-          set -euxo pipefail
-          echo "Transferring source archive to ${{ env.POWER_HOST }}..."
-          scp -o StrictHostKeyChecking=no \
-            pytorch-source.tar.gz \
-            ${{ env.POWER_USER }}@${{ env.POWER_HOST }}:${{ env.REMOTE_WORK_DIR }}-source.tar.gz
-          echo "Transfer complete"
-
-      - name: Extract source on Power LPAR
-        shell: bash
-        run: |
-          set -euxo pipefail
-          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH'
-          set -euxo pipefail
-          mkdir -p ${{ env.REMOTE_WORK_DIR }}
-          cd ${{ env.REMOTE_WORK_DIR }}
-          tar -xzf ${{ env.REMOTE_WORK_DIR }}-source.tar.gz
-          rm ${{ env.REMOTE_WORK_DIR }}-source.tar.gz
-          ls -la
-          ENDSSH
-
-      - name: Create Python virtual environment on Power LPAR
-        shell: bash
-        run: |
-          set -euxo pipefail
-          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH'
-          set -euxo pipefail
-          cd ${{ env.REMOTE_WORK_DIR }}
-          python3 -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip setuptools wheel
-          if [ -f requirements.txt ]; then
-            python -m pip install -r requirements.txt
-          fi
-          ENDSSH
-
-      - name: Build PyTorch on Power LPAR
+           set -euxo pipefail
+           cd pytorch
+           python3 -m venv .venv
+           . .venv/bin/activate
+           python -m pip install --upgrade pip setuptools wheel
+           if [ -f requirements.txt ]; then
+             python -m pip install -r requirements.txt
+           fi
+      
+      - name: Build PyTorch POWER Wheel
         id: build
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           BUILD_EXIT=0
-          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH' || BUILD_EXIT=$?
           set -euxo pipefail
-          cd ${{ env.REMOTE_WORK_DIR }}
+          cd pytorch
           . .venv/bin/activate
           
           export USE_CUDA=0
@@ -194,7 +137,6 @@ jobs:
           
           echo "Build complete. Wheel files:"
           ls -lh dist/
-          ENDSSH
           
           echo "build_exit_code=$BUILD_EXIT" >> "$GITHUB_OUTPUT"
           if [ $BUILD_EXIT -eq 0 ]; then
@@ -212,9 +154,8 @@ jobs:
         run: |
           set -euo pipefail
           TEST_EXIT=0
-          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH' || TEST_EXIT=$?
           set -euxo pipefail
-          cd ${{ env.REMOTE_WORK_DIR }}
+          cd pytorch
           . .venv/bin/activate
           
           echo "Running smoke tests..."
@@ -224,7 +165,6 @@ jobs:
           print(f"Test tensor: {torch.rand(2, 3)}")
           print("Smoke test passed!")
           PY
-          ENDSSH
           
           if [ $TEST_EXIT -eq 0 ]; then
             echo "outcome=success" >> "$GITHUB_OUTPUT"
@@ -238,29 +178,19 @@ jobs:
           echo "skipped=0" >> "$GITHUB_OUTPUT"
           echo "total=1" >> "$GITHUB_OUTPUT"
           exit $TEST_EXIT
-
-      - name: Copy artifacts back from Power LPAR
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p ./artifacts
-          echo "Copying wheel artifacts from ${{ env.POWER_HOST }}..."
-          scp -o StrictHostKeyChecking=no \
-            "${{ env.POWER_USER }}@${{ env.POWER_HOST }}:${{ env.REMOTE_WORK_DIR }}/dist/*.whl" \
-            ./artifacts/ || echo "No wheel files found or copy failed"
-          ls -lh ./artifacts/
-
-      - name: Cleanup remote workspace
+          
+      - name: Collect wheel artifacts
         if: always()
         shell: bash
         run: |
           set -euxo pipefail
-          ssh ${{ env.POWER_USER }}@${{ env.POWER_HOST }} << 'ENDSSH'
-          set -euxo pipefail
-          echo "Cleaning up ${{ env.REMOTE_WORK_DIR }}..."
-          rm -rf ${{ env.REMOTE_WORK_DIR }}
-          echo "Cleanup complete"
-          ENDSSH
+          mkdir -p ./artifacts
+
+          echo "Collecting wheel artifacts..."
+          cp pytorch/dist/*.whl ./artifacts/ 2>/dev/null || \
+            echo "No wheel files found"
+
+          ls -lh ./artifacts/ || true
 
       - name: Upload wheel artifacts
         if: always()
@@ -272,62 +202,64 @@ jobs:
 
       - name: Log build and test results
         if: always()
+        shell: bash
         run: |
-          echo "## Build and Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
+          echo "## Build and Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
           BUILD_STATUS="${{ steps.build.outputs.build_status }}"
-          TEST_OUTCOME="${{ steps.tests.outputs.outcome }}"
-          
-          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+          TEST_OUTCOME="${{ steps.tests.outcome }}"
+
+          echo "### Build Status" >> "$GITHUB_STEP_SUMMARY"
           if [ "$BUILD_STATUS" = "success" ]; then
-            echo "✅ **Build**: PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Build**: PASSED" >> "$GITHUB_STEP_SUMMARY"
           elif [ "$BUILD_STATUS" = "failure" ]; then
-            echo "❌ **Build**: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Build**: FAILED" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "⚠️ **Build**: UNKNOWN" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Build**: UNKNOWN" >> "$GITHUB_STEP_SUMMARY"
           fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Test Status" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Test Status" >> "$GITHUB_STEP_SUMMARY"
+
           if [ "$BUILD_STATUS" != "success" ]; then
-            echo "⏭️ **Tests**: SKIPPED (build failed)" >> $GITHUB_STEP_SUMMARY
+            echo "⏭️ **Tests**: SKIPPED (build failed)" >> "$GITHUB_STEP_SUMMARY"
           elif [ "$TEST_OUTCOME" = "success" ]; then
-            echo "✅ **Tests**: PASSED" >> $GITHUB_STEP_SUMMARY
-            echo "- Passed: ${{ steps.tests.outputs.passed || 0 }}" >> $GITHUB_STEP_SUMMARY
-            echo "- Failed: ${{ steps.tests.outputs.failed || 0 }}" >> $GITHUB_STEP_SUMMARY
-            echo "- Skipped: ${{ steps.tests.outputs.skipped || 0 }}" >> $GITHUB_STEP_SUMMARY
-            echo "- Total: ${{ steps.tests.outputs.total || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Tests**: PASSED" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Passed: ${{ steps.tests.outputs.passed || 0 }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Failed: ${{ steps.tests.outputs.failed || 0 }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Skipped: ${{ steps.tests.outputs.skipped || 0 }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Total: ${{ steps.tests.outputs.total || 0 }}" >> "$GITHUB_STEP_SUMMARY"
           elif [ "$TEST_OUTCOME" = "failure" ]; then
-            echo "❌ **Tests**: FAILED" >> $GITHUB_STEP_SUMMARY
-            echo "- Passed: ${{ steps.tests.outputs.passed || 0 }}" >> $GITHUB_STEP_SUMMARY
-            echo "- Failed: ${{ steps.tests.outputs.failed || 0 }}" >> $GITHUB_STEP_SUMMARY
-            echo "- Skipped: ${{ steps.tests.outputs.skipped || 0 }}" >> $GITHUB_STEP_SUMMARY
-            echo "- Total: ${{ steps.tests.outputs.total || 0 }}" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Tests**: FAILED" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Passed: ${{ steps.tests.outputs.passed || 0 }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Failed: ${{ steps.tests.outputs.failed || 0 }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Skipped: ${{ steps.tests.outputs.skipped || 0 }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Total: ${{ steps.tests.outputs.total || 0 }}" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "⚠️ **Tests**: NOT RUN" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Tests**: NOT RUN" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Determine final conclusion
         if: always()
         id: conclusion
+        shell: bash
         run: |
           BUILD_STATUS="${{ steps.build.outputs.build_status }}"
-          TEST_OUTCOME="${{ steps.tests.outputs.outcome }}"
-          
-          # If build failed, conclusion is failure
+          TEST_OUTCOME="${{ steps.tests.outcome }}"
+
           if [ "$BUILD_STATUS" = "failure" ]; then
             echo "conclusion=failure" >> "$GITHUB_OUTPUT"
             echo "reason=Build failed" >> "$GITHUB_OUTPUT"
-          # If build succeeded but tests failed, conclusion is failure
+
           elif [ "$TEST_OUTCOME" = "failure" ]; then
             echo "conclusion=failure" >> "$GITHUB_OUTPUT"
             echo "reason=Tests failed" >> "$GITHUB_OUTPUT"
-          # If build succeeded and tests succeeded (or were skipped), conclusion is success
+
           elif [ "$BUILD_STATUS" = "success" ] && [ "$TEST_OUTCOME" = "success" ]; then
             echo "conclusion=success" >> "$GITHUB_OUTPUT"
             echo "reason=Build and tests passed" >> "$GITHUB_OUTPUT"
-          # Fallback to job status
+
           else
             if [ "${{ job.status }}" = "success" ]; then
               echo "conclusion=success" >> "$GITHUB_OUTPUT"
