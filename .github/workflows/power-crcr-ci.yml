@@ -105,6 +105,8 @@ jobs:
         run: |
            set -euxo pipefail
            cd pytorch
+           sudo apt-get update
+           sudo apt-get install -y python3-venv
            python3 -m venv .venv
            . .venv/bin/activate
            python -m pip install --upgrade pip setuptools wheel
