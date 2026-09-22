@@ -158,6 +158,8 @@ jobs:
           set -euxo pipefail
           cd pytorch
           . .venv/bin/activate
+          python3 -m pip install dist/*.whl --force-reinstall
+          cd ..
           
           echo "Running smoke tests..."
           python - <<'PY'
