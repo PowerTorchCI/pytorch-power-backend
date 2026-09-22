@@ -133,8 +133,8 @@ jobs:
           )"
           
           echo "Building PyTorch with MAX_JOBS=${MAX_JOBS}..."
-          #MAX_JOBS=16 python3 -m build --wheel --no-isolation
-          python3 setup.py bdist_wheel
+          python3 -m build --wheel --no-isolation
+          #python3 setup.py bdist_wheel
           
           echo "Build complete. Wheel files:"
           ls -lh dist/
