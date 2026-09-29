@@ -171,8 +171,8 @@ jobs:
 
           if [ "${INSTALL_EXIT}" -eq 0 ]; then
             echo "Running smoke tests..."
-
-            python3 - <<'PY'
+          cd ..
+          python3 - <<'PY'
           import torch
 
           print(f"PyTorch version: {torch.__version__}")
