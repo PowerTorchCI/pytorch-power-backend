@@ -264,12 +264,12 @@ jobs:
 
           cd pytorch
           . .venv/bin/activate
-
+  
           python3 -m pip install \
             expecttest \
             hypothesis \
-            unittest2 \
-            xmlrunner
+            unittest-xml-reporting
+            
           
       # ------------------------------------------------------------
       # Download wheel produced by BUILD job
