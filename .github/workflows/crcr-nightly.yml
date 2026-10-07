@@ -300,6 +300,7 @@ jobs:
 
           echo ""
           echo "Installed PyTorch version:"
+          cd ..
           python3 -c "import torch; print(torch.__version__)"
 
           echo ""
