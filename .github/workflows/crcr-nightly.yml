@@ -1,7 +1,7 @@
 name: PyTorch POWER Backend CRCR Nightly
 
 on:
-  # Allows us to test the workflow manually before enabling/depending on cron.
+  # Allows us to test the workflow manually.
   workflow_dispatch:
 
   # Daily at 08:30 UTC.
@@ -16,16 +16,28 @@ permissions:
   contents: read
   id-token: write
 
+
+# =====================================================================
+# BUILD JOB
+# =====================================================================
+
 jobs:
-  power-build-and-test:
+
+  power-build:
+    name: Build PyTorch on ppc64le
     runs-on: self-hosted
+
+    outputs:
+      build_status: ${{ steps.build.outputs.build_status }}
+      upstream_sha: ${{ steps.upstream.outputs.sha }}
 
     env:
       PYTORCH_REPO_URL: https://github.com/pytorch/pytorch.git
 
     steps:
+
       # ------------------------------------------------------------
-      # Checkout the POWER downstream repository
+      # Checkout POWER downstream repository
       # ------------------------------------------------------------
       - name: Checkout POWER downstream repository
         uses: actions/checkout@v4
@@ -42,7 +54,7 @@ jobs:
           submodules: recursive
 
       # ------------------------------------------------------------
-      # Record the exact PyTorch commit being tested
+      # Record exact PyTorch SHA being tested
       # ------------------------------------------------------------
       - name: Resolve upstream SHA
         id: upstream
@@ -66,7 +78,7 @@ jobs:
         shell: bash
         run: |
           cat <<SUMMARY >> "$GITHUB_STEP_SUMMARY"
-          ## POWER CRCR Nightly
+          ## POWER CRCR Nightly - Build
 
           - Upstream repository: \`pytorch/pytorch\`
           - Upstream SHA: \`${{ steps.upstream.outputs.sha }}\`
@@ -78,9 +90,6 @@ jobs:
 
       # ------------------------------------------------------------
       # Create Python virtual environment
-      #
-      # The self-hosted runner image should already contain the
-      # required Python venv package (for example python3.12-venv).
       # ------------------------------------------------------------
       - name: Create Python virtual environment
         shell: bash
@@ -103,7 +112,7 @@ jobs:
           fi
 
       # ------------------------------------------------------------
-      # Build PyTorch
+      # Build PyTorch POWER wheel
       # ------------------------------------------------------------
       - name: Build PyTorch POWER Wheel
         id: build
@@ -129,8 +138,11 @@ jobs:
           echo "Building PyTorch with MAX_JOBS=${MAX_JOBS}..."
 
           set +e
+
           python3 -m build --wheel --no-isolation
+
           BUILD_EXIT=$?
+
           set -e
 
           echo "Build exit code: ${BUILD_EXIT}"
@@ -145,17 +157,174 @@ jobs:
             echo "Build failed."
           fi
 
+          echo ""
           echo "Wheel files:"
           ls -lh dist/ 2>/dev/null || true
 
           exit "${BUILD_EXIT}"
 
       # ------------------------------------------------------------
-      # Install wheel and run smoke tests
+      # Upload wheel for the test job
       # ------------------------------------------------------------
-      - name: Run tests on ppc64le
-        id: tests
+      - name: Upload PyTorch wheel
         if: steps.build.outputs.build_status == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: power-crcr-nightly-wheel-${{ github.run_id }}
+          path: pytorch/dist/*.whl
+          if-no-files-found: error
+
+      # ------------------------------------------------------------
+      # Build summary
+      # ------------------------------------------------------------
+      - name: Build summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## POWER CRCR Nightly - Build Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          BUILD_STATUS="${{ steps.build.outputs.build_status }}"
+
+          if [ "$BUILD_STATUS" = "success" ]; then
+            echo "✅ **Build: PASSED**" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "PyTorch SHA: \`${{ steps.upstream.outputs.sha }}\`" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ **Build: FAILED**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+
+# =====================================================================
+# TEST JOB
+# =====================================================================
+
+  power-test:
+    name: Test PyTorch on ppc64le
+    needs: power-build
+    if: needs.power-build.outputs.build_status == 'success'
+    runs-on: self-hosted
+
+    outputs:
+      test_status: ${{ steps.tests.outputs.test_status }}
+
+    steps:
+
+      # ------------------------------------------------------------
+      # Checkout the EXACT PyTorch commit used for the build.
+      #
+      # This checkout is NOT used to install PyTorch.
+      # The wheel produced by power-build is installed below.
+      #
+      # We need this source tree because the official PyTorch
+      # test files live under pytorch/test/.
+      # ------------------------------------------------------------
+      - name: Checkout exact PyTorch commit
+        uses: actions/checkout@v4
+        with:
+          repository: pytorch/pytorch
+          ref: ${{ needs.power-build.outputs.upstream_sha }}
+          path: pytorch
+          submodules: recursive
+
+      # ------------------------------------------------------------
+      # Create Python virtual environment
+      # ------------------------------------------------------------
+      - name: Create Python virtual environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd pytorch
+
+          python3 -m venv .venv
+
+          . .venv/bin/activate
+
+          python3 -m pip install --upgrade \
+            pip \
+            setuptools \
+            wheel
+
+          if [ -f requirements.txt ]; then
+            python3 -m pip install -r requirements.txt
+          fi
+
+      # ------------------------------------------------------------
+      # Install PyTorch test dependencies
+      #
+      # PyTorch's contributing guide lists expecttest and hypothesis
+      # as required Python test dependencies.
+      # ------------------------------------------------------------
+      - name: Install PyTorch test dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd pytorch
+          . .venv/bin/activate
+
+          python3 -m pip install \
+            expecttest \
+            hypothesis
+
+      # ------------------------------------------------------------
+      # Download wheel produced by BUILD job
+      # ------------------------------------------------------------
+      - name: Download PyTorch wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: power-crcr-nightly-wheel-${{ github.run_id }}
+          path: pytorch/dist
+
+      # ------------------------------------------------------------
+      # Install the wheel
+      #
+      # THIS is the PyTorch build we are actually testing.
+      # ------------------------------------------------------------
+      - name: Install PyTorch POWER wheel
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd pytorch
+          . .venv/bin/activate
+
+          echo "Installing PyTorch wheel:"
+          ls -lh dist/
+
+          python3 -m pip install \
+            dist/*.whl \
+            --force-reinstall
+
+          echo ""
+          echo "Installed PyTorch version:"
+          python3 -c "import torch; print(torch.__version__)"
+
+          echo ""
+          echo "PyTorch configuration:"
+          python3 -c "import torch; print(torch.__config__.show())"
+
+      # ------------------------------------------------------------
+      # Run meaningful upstream PyTorch CPU tests
+      #
+      # These are official PyTorch test suites:
+      #
+      #   test_torch.py
+      #       Basic PyTorch functionality
+      #
+      #   test_autograd.py
+      #       Automatic differentiation
+      #
+      #   test_nn.py
+      #       NN operators and autograd
+      #
+      # We deliberately continue after an individual suite fails so
+      # that all three suites are exercised in the nightly run.
+      # ------------------------------------------------------------
+      - name: Run PyTorch CPU test suites
+        id: tests
         continue-on-error: true
         shell: bash
         run: |
@@ -164,114 +333,186 @@ jobs:
           cd pytorch
           . .venv/bin/activate
 
-          set +e
+          echo "=========================================="
+          echo " Running PyTorch CPU test suites"
+          echo "=========================================="
 
-          python3 -m pip install dist/*.whl --force-reinstall
-          INSTALL_EXIT=$?
+          TEST_EXIT=0
 
-          if [ "${INSTALL_EXIT}" -eq 0 ]; then
-            echo "Running smoke tests..."
-          cd ..
-          python3 - <<'PY'
-          import torch
+          # --------------------------------------------------------
+          # Core PyTorch functionality
+          # --------------------------------------------------------
+          echo ""
+          echo "=========================================="
+          echo ">>> Running test_torch.py"
+          echo "=========================================="
 
-          print(f"PyTorch version: {torch.__version__}")
-          print(f"PyTorch architecture test: {torch.rand(2, 3)}")
+          python3 test/test_torch.py
 
-          x = torch.rand(2, 3)
-          y = torch.rand(3, 4)
-          z = torch.matmul(x, y)
+          RC=$?
 
-          print("Matrix multiplication result:")
-          print(z)
-
-          assert z.shape == (2, 4)
-
-          print("Smoke test passed!")
-          PY
-
-            TEST_EXIT=$?
+          if [ "${RC}" -ne 0 ]; then
+            echo "❌ test_torch.py FAILED (exit ${RC})"
+            TEST_EXIT=1
           else
-            echo "Wheel installation failed."
-            TEST_EXIT=${INSTALL_EXIT}
+            echo "✅ test_torch.py PASSED"
           fi
 
-          set -e
 
-          echo "Test exit code: ${TEST_EXIT}"
+          # --------------------------------------------------------
+          # Autograd
+          # --------------------------------------------------------
+          echo ""
+          echo "=========================================="
+          echo ">>> Running test_autograd.py"
+          echo "=========================================="
+
+          python3 test/test_autograd.py
+
+          RC=$?
+
+          if [ "${RC}" -ne 0 ]; then
+            echo "❌ test_autograd.py FAILED (exit ${RC})"
+            TEST_EXIT=1
+          else
+            echo "✅ test_autograd.py PASSED"
+          fi
+
+
+          # --------------------------------------------------------
+          # Neural network functionality
+          # --------------------------------------------------------
+          echo ""
+          echo "=========================================="
+          echo ">>> Running test_nn.py"
+          echo "=========================================="
+
+          python3 test/test_nn.py
+
+          RC=$?
+
+          if [ "${RC}" -ne 0 ]; then
+            echo "❌ test_nn.py FAILED (exit ${RC})"
+            TEST_EXIT=1
+          else
+            echo "✅ test_nn.py PASSED"
+          fi
+
+
+          # --------------------------------------------------------
+          # Overall result
+          # --------------------------------------------------------
+          echo ""
+          echo "=========================================="
+          echo " Test Summary"
+          echo "=========================================="
 
           if [ "${TEST_EXIT}" -eq 0 ]; then
-            echo "outcome=success" >> "$GITHUB_OUTPUT"
-            echo "passed=1" >> "$GITHUB_OUTPUT"
+
+            echo "test_status=success" >> "$GITHUB_OUTPUT"
+            echo "test_exit_code=0" >> "$GITHUB_OUTPUT"
+            echo "passed=3" >> "$GITHUB_OUTPUT"
             echo "failed=0" >> "$GITHUB_OUTPUT"
+
+            echo "✅ All PyTorch CPU test suites passed."
+
           else
-            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+
+            echo "test_status=failure" >> "$GITHUB_OUTPUT"
+            echo "test_exit_code=1" >> "$GITHUB_OUTPUT"
             echo "passed=0" >> "$GITHUB_OUTPUT"
             echo "failed=1" >> "$GITHUB_OUTPUT"
+
+            echo "❌ One or more PyTorch CPU test suites failed."
+
           fi
 
-          echo "skipped=0" >> "$GITHUB_OUTPUT"
-          echo "total=1" >> "$GITHUB_OUTPUT"
+          echo "total=3" >> "$GITHUB_OUTPUT"
 
           exit "${TEST_EXIT}"
 
       # ------------------------------------------------------------
-      # Collect wheel
+      # Test summary
       # ------------------------------------------------------------
-      - name: Collect wheel artifacts
+      - name: Test summary
         if: always()
         shell: bash
         run: |
-          set -euxo pipefail
-
-          mkdir -p artifacts
-
-          cp pytorch/dist/*.whl artifacts/ 2>/dev/null || \
-            echo "No wheel files found."
-
-          ls -lh artifacts/ || true
-
-      # ------------------------------------------------------------
-      # Upload wheel to GitHub Actions
-      # ------------------------------------------------------------
-      - name: Upload wheel artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: power-crcr-nightly-wheel-${{ github.run_id }}
-          path: artifacts/*.whl
-          if-no-files-found: warn
-
-      # ------------------------------------------------------------
-      # GitHub Actions summary
-      # ------------------------------------------------------------
-      - name: Log build and test results
-        if: always()
-        shell: bash
-        run: |
-          echo "## CRCR Nightly Build and Test Results" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          BUILD_STATUS="${{ steps.build.outputs.build_status }}"
-          TEST_OUTCOME="${{ steps.tests.outcome }}"
-
-          echo "### Build" >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$BUILD_STATUS" = "success" ]; then
-            echo "✅ **Build: PASSED**" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "❌ **Build: FAILED**" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "## POWER CRCR Nightly - Test Results" \
+            >> "$GITHUB_STEP_SUMMARY"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Tests" >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$BUILD_STATUS" != "success" ]; then
-            echo "⏭️ **Tests: SKIPPED**" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$TEST_OUTCOME" = "success" ]; then
+          echo "**PyTorch SHA:** \`${{ needs.power-build.outputs.upstream_sha }}\`" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          TEST_STATUS="${{ steps.tests.outputs.test_status }}"
+
+          if [ "$TEST_STATUS" = "success" ]; then
             echo "✅ **Tests: PASSED**" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "❌ **Tests: FAILED**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Test Suites" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`test_torch.py\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`test_autograd.py\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`test_nn.py\`" >> "$GITHUB_STEP_SUMMARY"
+
+
+# =====================================================================
+# CRCR REPORTING JOB
+# =====================================================================
+
+  report-crcr:
+    name: Report result to PyTorch CRCR
+    needs:
+      - power-build
+      - power-test
+
+    # We want to report even if build or tests fail.
+    if: always()
+
+    runs-on: self-hosted
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      # ------------------------------------------------------------
+      # Determine overall nightly conclusion
+      # ------------------------------------------------------------
+      - name: Determine nightly conclusion
+        id: conclusion
+        shell: bash
+        run: |
+          BUILD_STATUS="${{ needs.power-build.outputs.build_status }}"
+          TEST_STATUS="${{ needs.power-test.outputs.test_status }}"
+
+          echo "Build status: ${BUILD_STATUS}"
+          echo "Test status:  ${TEST_STATUS}"
+
+          if [ "${BUILD_STATUS}" != "success" ]; then
+
+            echo "conclusion=failure" >> "$GITHUB_OUTPUT"
+            echo "reason=PyTorch build failed" >> "$GITHUB_OUTPUT"
+
+          elif [ "${TEST_STATUS}" != "success" ]; then
+
+            echo "conclusion=failure" >> "$GITHUB_OUTPUT"
+            echo "reason=PyTorch tests failed" >> "$GITHUB_OUTPUT"
+
+          else
+
+            echo "conclusion=success" >> "$GITHUB_OUTPUT"
+            echo "reason=Build and tests passed" >> "$GITHUB_OUTPUT"
+
           fi
 
       # ------------------------------------------------------------
@@ -283,7 +524,34 @@ jobs:
         uses: pytorch/test-infra/.github/actions/cross-repo-ci-relay-callback@main
         with:
           status: completed
-          conclusion: ${{ job.status }}
-          delivery-id: ${{ steps.upstream.outputs.sha }}
+          conclusion: ${{ steps.conclusion.outputs.conclusion }}
+          delivery-id: ${{ needs.power-build.outputs.upstream_sha }}
           event-type: nightly
-          job-name: "linux-ppc64le-power / build-and-test"
+          job-name: "linux-ppc64le-power / test"
+
+      # ------------------------------------------------------------
+      # Final summary
+      # ------------------------------------------------------------
+      - name: CRCR reporting summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## POWER CRCR Nightly - Final Result" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "**PyTorch SHA:** \`${{ needs.power-build.outputs.upstream_sha }}\`" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+          echo "**Build:** \`${{ needs.power-build.outputs.build_status }}\`" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+          echo "**Tests:** \`${{ needs.power-test.outputs.test_status }}\`" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+          echo "**Conclusion:** \`${{ steps.conclusion.outputs.conclusion }}\`" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+          echo "**Reason:** ${{ steps.conclusion.outputs.reason }}" \
+            >> "$GITHUB_STEP_SUMMARY"
