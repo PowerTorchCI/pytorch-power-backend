@@ -267,9 +267,9 @@ jobs:
 
           python3 -m pip install \
             expecttest \
-            hypothesis \
-            xmlrunner
-
+            hypothesis
+          
+          python -m pip install --prefer-binary --extra-index-url https://repo.fury.io/mgiessing xmlrunner
       # ------------------------------------------------------------
       # Download wheel produced by BUILD job
       # ------------------------------------------------------------
