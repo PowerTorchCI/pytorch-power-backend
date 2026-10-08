@@ -299,16 +299,14 @@ jobs:
           python3 -m pip install \
             dist/*.whl \
             --force-reinstall
-
-          echo ""
-          echo "Installed PyTorch version:"
+          
           cd ..
           python3 -c "import torch; print(torch.__version__)"
 
           echo ""
           echo "PyTorch configuration:"
           python3 -c "import torch; print(torch.__config__.show())"
-
+          
       # ------------------------------------------------------------
       # Run meaningful upstream PyTorch CPU tests
       #
@@ -335,7 +333,8 @@ jobs:
 
           cd pytorch
           . .venv/bin/activate
-
+          
+          cd ..
           echo "=========================================="
           echo " Running PyTorch CPU test suites"
           echo "=========================================="
@@ -350,7 +349,7 @@ jobs:
           echo ">>> Running test_torch.py"
           echo "=========================================="
 
-          python3 test/test_torch.py
+          python3 ./pytorch/test/test_torch.py
 
           RC=$?
 
@@ -370,7 +369,7 @@ jobs:
           echo ">>> Running test_autograd.py"
           echo "=========================================="
 
-          python3 test/test_autograd.py
+          python3 ./pytorch/test/test_autograd.py
 
           RC=$?
 
@@ -390,7 +389,7 @@ jobs:
           echo ">>> Running test_nn.py"
           echo "=========================================="
 
-          python3 test/test_nn.py
+          python3 ./pytorch/test/test_nn.py
 
           RC=$?
 
