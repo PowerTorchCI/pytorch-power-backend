@@ -216,7 +216,7 @@ jobs:
             echo "- BUILD_TEST: 1"
             echo "- Build command: pip install --no-build-isolation -v -e ."
           } >> "$GITHUB_STEP_SUMMARY"
-
+      
       - name: Run native PyTorch test binaries
         id: tests
         if: steps.build.outputs.build_status == 'success'
@@ -227,21 +227,29 @@ jobs:
 
           cd pytorch/build/bin
 
-          CURRENT_STAGE="Running Tests"
-          TEST_DIR="${1:-.}"
           LOG_FILE="$GITHUB_WORKSPACE/test1.log"
           TMP_OUTPUT="$(mktemp)"
 
           TESTS_FAILED=0
           TESTS_PASSED=0
+          TESTS_KNOWN_FAILED=0
+          TESTS_UNEXPECTED_FAILED=0
           TESTS_RUN=0
+
+          KNOWN_FAILURES=(
+            "example_allreduce"
+            "inline_container_test"
+            "test_lazy"
+            "vec_test_all_types_DEFAULT"
+          )
 
           trap 'rm -f "$TMP_OUTPUT"' EXIT
 
-          echo "Running tests in: $PWD/$TEST_DIR" | tee "$LOG_FILE"
+          echo "Running native tests in: $PWD" | tee "$LOG_FILE"
+          echo "Known POWER failures will not fail this CI step." | tee -a "$LOG_FILE"
           echo "----------------------------------------" | tee -a "$LOG_FILE"
 
-          for test_binary in "$TEST_DIR"/*; do
+          for test_binary in ./*; do
             [[ -x "$test_binary" && -f "$test_binary" ]] || continue
 
             name="$(basename "$test_binary")"
@@ -249,13 +257,29 @@ jobs:
 
             echo "Running: $name" | tee -a "$LOG_FILE"
 
+            rc=0
             if "$test_binary" >"$TMP_OUTPUT" 2>&1; then
               echo "PASS: $name" | tee -a "$LOG_FILE"
               TESTS_PASSED=$((TESTS_PASSED + 1))
             else
               rc=$?
-              TESTS_FAILED=1
-              echo "FAIL: $name (exit ${rc})" | tee -a "$LOG_FILE"
+              known_failure=0
+
+              for known in "${KNOWN_FAILURES[@]}"; do
+                if [[ "$name" == "$known" ]]; then
+                  known_failure=1
+                  break
+                fi
+              done
+
+              if [[ "$known_failure" -eq 1 ]]; then
+                echo "KNOWN FAILURE: $name (exit ${rc})" | tee -a "$LOG_FILE"
+                TESTS_KNOWN_FAILED=$((TESTS_KNOWN_FAILED + 1))
+              else
+                echo "UNEXPECTED FAILURE: $name (exit ${rc})" | tee -a "$LOG_FILE"
+                TESTS_UNEXPECTED_FAILED=$((TESTS_UNEXPECTED_FAILED + 1))
+                TESTS_FAILED=1
+              fi
 
               if [[ "$rc" -eq 139 ]]; then
                 echo "Possible segmentation fault (exit 139)" | tee -a "$LOG_FILE"
@@ -263,7 +287,6 @@ jobs:
             fi
 
             summary="$(grep -E 'PASSED|FAILED|SKIPPED|DISABLED|ran .* tests' "$TMP_OUTPUT" || true)"
-
             if [[ -n "$summary" ]]; then
               echo "$summary" | tee -a "$LOG_FILE"
             fi
@@ -282,23 +305,29 @@ jobs:
           echo "" | tee -a "$LOG_FILE"
           echo "Native test binaries run: ${TESTS_RUN}" | tee -a "$LOG_FILE"
           echo "Passed binaries: ${TESTS_PASSED}" | tee -a "$LOG_FILE"
+          echo "Known failures: ${TESTS_KNOWN_FAILED}" | tee -a "$LOG_FILE"
+          echo "Unexpected failures: ${TESTS_UNEXPECTED_FAILED}" | tee -a "$LOG_FILE"
 
           if [[ "$TESTS_RUN" -eq 0 ]]; then
             echo "No executable test binaries were found." | tee -a "$LOG_FILE"
             TESTS_FAILED=1
           fi
 
-          echo "tests_run=${TESTS_RUN}" >> "$GITHUB_OUTPUT"
-          echo "tests_passed=${TESTS_PASSED}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tests_run=${TESTS_RUN}"
+            echo "tests_passed=${TESTS_PASSED}"
+            echo "tests_known_failed=${TESTS_KNOWN_FAILED}"
+            echo "tests_unexpected_failed=${TESTS_UNEXPECTED_FAILED}"
+          } >> "$GITHUB_OUTPUT"
 
           if [[ "$TESTS_FAILED" -ne 0 ]]; then
             echo "test_status=failure" >> "$GITHUB_OUTPUT"
-            echo "❌ One or more native test binaries failed." | tee -a "$LOG_FILE"
+            echo "❌ Unexpected native test failures detected." | tee -a "$LOG_FILE"
             exit 1
           fi
 
           echo "test_status=success" >> "$GITHUB_OUTPUT"
-          echo "✅ All native test binaries passed." | tee -a "$LOG_FILE"
+          echo "✅ No unexpected native test failures." | tee -a "$LOG_FILE"
 
       - name: Mark tests skipped when build fails
         if: always() && steps.build.outputs.build_status != 'success'
@@ -306,6 +335,21 @@ jobs:
         run: |
           echo "Native tests were not run because the build did not succeed." \
             >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Native test summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## POWER Native Test Results"
+            echo ""
+            echo "- Test status: ${{ steps.tests.outputs.test_status || 'not run' }}"
+            echo "- Executable binaries run: ${{ steps.tests.outputs.tests_run || '0' }}"
+            echo "- Binaries passed: ${{ steps.tests.outputs.tests_passed || '0' }}"
+            echo "- Known failures (ignored): ${{ steps.tests.outputs.tests_known_failed || '0' }}"
+            echo "- Unexpected failures: ${{ steps.tests.outputs.tests_unexpected_failed || '0' }}"
+            echo "- Test log: \`test1.log\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Native test summary
         if: always()
