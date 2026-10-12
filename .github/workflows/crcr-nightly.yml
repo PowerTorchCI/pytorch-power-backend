@@ -94,7 +94,7 @@ jobs:
           patches = [
               (
                   Path("aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h"),
-                  "    DEFINE_MEMBER_TERNARY_OP(madd, double, vec_madd)\n",
+                  "  DEFINE_MEMBER_TERNARY_OP(madd, double, vec_madd)\n",
                   """  double reduce_max() const {
               vfloat64 max_vec = vec_max(_vec0, _vec1);
               return vec_extract(max_vec, 0) > vec_extract(max_vec, 1)
@@ -104,7 +104,7 @@ jobs:
               ),
               (
                   Path("aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h"),
-                  "    DEFINE_MEMBER_TERNARY_OP(madd, float, vec_madd)\n",
+                  "  DEFINE_MEMBER_TERNARY_OP(madd, float, vec_madd)\n",
                   """  float reduce_max() const {
               vfloat32 max_vec = vec_max(_vec0, _vec1);
               return vec_extract(max_vec, 0) > vec_extract(max_vec, 1) ?
@@ -123,12 +123,20 @@ jobs:
               ),
           ]
 
+          # Validate both files before modifying either one.
+          sources = {}
+
           for path, anchor, method in patches:
+              if not path.is_file():
+                  raise RuntimeError(f"Source file not found: {path}")
+
               source = path.read_text()
 
               if "reduce_max() const" in source:
-                  print(f"reduce_max already exists in {path}; skipping")
-                  continue
+                  raise RuntimeError(
+                      f"reduce_max already exists in {path}; "
+                      "refusing to apply the patch twice."
+                  )
 
               count = source.count(anchor)
               if count != 1:
@@ -137,17 +145,22 @@ jobs:
                       f"found {count}. Check the upstream source before patching."
                   )
 
+              sources[path] = source
+
+          # Apply the patch after both anchors have been validated.
+          for path, anchor, method in patches:
+              source = sources[path]
               path.write_text(source.replace(anchor, anchor + method, 1))
               print(f"Applied reduce_max to {path}")
 
           PY
 
           git diff --check
-
-          echo "Applied POWER patch:"
           git diff -- \
             aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h \
             aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h
+
+   
 
       - name: Build PyTorch with C++ tests enabled
         id: build
