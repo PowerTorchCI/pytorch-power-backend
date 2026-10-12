@@ -80,7 +80,7 @@ jobs:
           if [ -f requirements.txt ]; then
             python3 -m pip install -r requirements.txt
           fi
-
+      
       - name: Apply POWER VSX reduce_max patch
         id: patch
         shell: bash
@@ -88,44 +88,63 @@ jobs:
           set -euo pipefail
           cd pytorch
 
-          cat > /tmp/power-reduce-max.patch <<'PATCH'
-          diff --git a/aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h b/aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h
-          --- a/aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h
-          +++ b/aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h
-          @@ -446,6 +446,10 @@ class Vectorized<double> {
-               DEFINE_MEMBER_OP(operator|, double, vec_or)
-               DEFINE_MEMBER_OP(operator^, double, vec_xor)
-               DEFINE_MEMBER_TERNARY_OP(madd, double, vec_madd)
-          +  double reduce_max() const {
-          +    vfloat64 max_vec = vec_max(_vec0, _vec1);
-          +    return vec_extract(max_vec, 0) > vec_extract(max_vec, 1) ? vec_extract(max_vec, 0) : vec_extract(max_vec, 1);
-          +  }
-             };
-           template <>
-           Vectorized<double> inline maximum(
-          diff --git a/aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h b/aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h
-          --- a/aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h
-          +++ b/aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h
-          @@ -481,6 +481,12 @@ class Vectorized<float> {
-               DEFINE_MEMBER_OP(operator|, float, vec_or)
-               DEFINE_MEMBER_OP(operator^, float, vec_xor)
-               DEFINE_MEMBER_TERNARY_OP(madd, float, vec_madd)
-          +  float reduce_max() const {
-          +    vfloat32 max_vec = vec_max(_vec0, _vec1);
-          +    return vec_extract(max_vec, 0) > vec_extract(max_vec, 1) ?
-          +           (vec_extract(max_vec, 0) > vec_extract(max_vec, 2) ? (vec_extract(max_vec, 0) > vec_extract(max_vec, 3) ? vec_extract(max_vec, 0) : vec_extract(max_vec, 3)) : (vec_extract(max_vec, 2) > vec_extract(max_vec, 3) ? vec_extract(max_vec, 2) : vec_extract(max_vec, 3))) :
-          +           (vec_extract(max_vec, 1) > vec_extract(max_vec, 2) ? (vec_extract(max_vec, 1) > vec_extract(max_vec, 3) ? vec_extract(max_vec, 1) : vec_extract(max_vec, 3)) : (vec_extract(max_vec, 2) > vec_extract(max_vec, 3) ? vec_extract(max_vec, 2) : vec_extract(max_vec, 3)));
-          +  }
-             };
-          PATCH
+          python3 - <<'PY'
+          from pathlib import Path
 
-          echo "Checking POWER patch against upstream source..."
-          git apply --check /tmp/power-reduce-max.patch
-          git apply /tmp/power-reduce-max.patch
+          patches = [
+              (
+                  Path("aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h"),
+                  "    DEFINE_MEMBER_TERNARY_OP(madd, double, vec_madd)\n",
+                  """  double reduce_max() const {
+              vfloat64 max_vec = vec_max(_vec0, _vec1);
+              return vec_extract(max_vec, 0) > vec_extract(max_vec, 1)
+                  ? vec_extract(max_vec, 0) : vec_extract(max_vec, 1);
+            }
+          """,
+              ),
+              (
+                  Path("aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h"),
+                  "    DEFINE_MEMBER_TERNARY_OP(madd, float, vec_madd)\n",
+                  """  float reduce_max() const {
+              vfloat32 max_vec = vec_max(_vec0, _vec1);
+              return vec_extract(max_vec, 0) > vec_extract(max_vec, 1) ?
+                  (vec_extract(max_vec, 0) > vec_extract(max_vec, 2) ?
+                      (vec_extract(max_vec, 0) > vec_extract(max_vec, 3) ?
+                          vec_extract(max_vec, 0) : vec_extract(max_vec, 3)) :
+                      (vec_extract(max_vec, 2) > vec_extract(max_vec, 3) ?
+                          vec_extract(max_vec, 2) : vec_extract(max_vec, 3))) :
+                  (vec_extract(max_vec, 1) > vec_extract(max_vec, 2) ?
+                      (vec_extract(max_vec, 1) > vec_extract(max_vec, 3) ?
+                          vec_extract(max_vec, 1) : vec_extract(max_vec, 3)) :
+                      (vec_extract(max_vec, 2) > vec_extract(max_vec, 3) ?
+                          vec_extract(max_vec, 2) : vec_extract(max_vec, 3)));
+            }
+          """,
+              ),
+          ]
+
+          for path, anchor, method in patches:
+              source = path.read_text()
+
+              if "reduce_max() const" in source:
+                  print(f"reduce_max already exists in {path}; skipping")
+                  continue
+
+              count = source.count(anchor)
+              if count != 1:
+                  raise RuntimeError(
+                      f"Expected exactly one insertion anchor in {path}, "
+                      f"found {count}. Check the upstream source before patching."
+                  )
+
+              path.write_text(source.replace(anchor, anchor + method, 1))
+              print(f"Applied reduce_max to {path}")
+
+          PY
 
           git diff --check
 
-          echo "Applied patch:"
+          echo "Applied POWER patch:"
           git diff -- \
             aten/src/ATen/cpu/vec/vec256/vsx/vec256_double_vsx.h \
             aten/src/ATen/cpu/vec/vec256/vsx/vec256_float_vsx.h
