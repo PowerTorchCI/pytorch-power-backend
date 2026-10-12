@@ -37,9 +37,24 @@ jobs:
           repository: pytorch/pytorch
           ref: main
           path: pytorch
-          submodules: recursive
+          submodules: false
           fetch-depth: 1
+     
+      - name: Initialize submodules
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          cd "$GITHUB_WORKSPACE/pytorch"
+
+          LOCK=".git/modules/android/libs/fbjni/shallow.lock"
+          if [[ -f "$LOCK" ]]; then
+            rm -f "$LOCK"
+          fi
+
+          git submodule sync --recursive
+          git submodule update --init --force --depth=1 --recursive
+          
       - name: Resolve upstream SHA
         id: upstream
         shell: bash
