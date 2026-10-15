@@ -255,6 +255,10 @@ jobs:
             "example_allreduce"
             "inline_container_test"
             "test_lazy"
+            "test_jit"
+            "test_api"
+            "test_cpp_rpc"
+            "test_aoti_abi_check"
             "vec_test_all_types_DEFAULT"
           )
 
