@@ -425,17 +425,58 @@ jobs:
             echo "conclusion=success" >> "$GITHUB_OUTPUT"
             echo "reason=Build and native tests passed" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Report to CRCR
+      
+      - name: Report to RHEL Results Relay
         if: always()
         continue-on-error: true
-        uses: pytorch/test-infra/.github/actions/cross-repo-ci-relay-callback@main
+        uses: actions/github-script@v7
+        env:
+          RESULT_CONCLUSION: ${{ steps.conclusion.outputs.conclusion }}
+          UPSTREAM_SHA: ${{ needs.power-build-and-test.outputs.upstream_sha }}
         with:
-          status: completed
-          conclusion: ${{ steps.conclusion.outputs.conclusion }}
-          delivery-id: ${{ needs.power-build-and-test.outputs.upstream_sha }}
-          event-type: nightly
-          job-name: "linux-ppc64le-power / test"
+          script: |
+            const endpoint =
+              "https://hg21hqq0r6.execute-api.us-east-1.amazonaws.com/default/crcr-rhel-workflow";
+
+            const token = await core.getIDToken("rhel-results-relay");
+
+            const conclusion = process.env.RESULT_CONCLUSION;
+            if (!["success", "failure", "cancelled", "skipped"].includes(conclusion)) {
+              throw new Error(`Unexpected conclusion: ${conclusion}`);
+            }
+
+            const payload = {
+              status: "completed",
+              conclusion,
+              event_type: "nightly",
+              delivery_id: `${context.runId}-${context.runAttempt}`,
+              job_name: "linux-ppc64le-power / test",
+              run_id: String(context.runId),
+              run_attempt: context.runAttempt,
+              workflow_name: context.workflow,
+              artifact_url:
+                `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              upstream_sha: process.env.UPSTREAM_SHA || ""
+            };
+
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(payload)
+            });
+
+            const responseText = await response.text();
+            core.info(`RHEL Results Relay HTTP status: ${response.status}`);
+            core.info(`Relay response: ${responseText}`);
+
+            if (!response.ok) {
+              throw new Error(
+                `RHEL Results Relay request failed: HTTP ${response.status}`
+              );
+            }
 
       - name: CRCR reporting summary
         if: always()
