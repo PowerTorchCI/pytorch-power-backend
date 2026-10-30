@@ -462,7 +462,7 @@ jobs:
               conclusion,
               event_type: "nightly",
               delivery_id: `${context.runId}-${context.runAttempt}`,
-              job_name: "linux-ppc64le-power / test",
+              job_name: "linux-rhel9.6-cpu-py3.12-ppc64le / build-and-test,
               run_id: String(context.runId),
               run_attempt: context.runAttempt,
               workflow_name: context.workflow,
