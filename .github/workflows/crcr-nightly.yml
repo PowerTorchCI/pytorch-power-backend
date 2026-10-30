@@ -78,6 +78,18 @@ jobs:
             echo "- Runner: ${{ runner.name }}"
             echo "- Runner OS: ${{ runner.os }}"
             echo "- Runner architecture: ${{ runner.arch }}"
+            echo "### Operating System Details"
+            echo '```'
+            cat /etc/os-release
+            echo ""
+            cat /etc/redhat-release 2>/dev/null || true
+            echo '```'
+            echo ""
+            echo "### Kernel and Architecture"
+            echo '```'
+            uname -a
+            uname -m
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create Python virtual environment
