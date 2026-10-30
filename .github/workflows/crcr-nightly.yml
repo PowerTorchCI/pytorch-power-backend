@@ -71,8 +71,6 @@ jobs:
         run: |
           echo "===== Operating System Details ====="
           cat /etc/os-release
-          echo "===== RHEL Release ====="
-          cat /etc/redhat-release || true
 
           echo "===== Kernel ====="
           uname -a
@@ -467,7 +465,7 @@ jobs:
               conclusion,
               event_type: "nightly",
               delivery_id: `${context.runId}-${context.runAttempt}`,
-              job_name: "linux-rhel9.6-cpu-py3.12-ppc64le / build-and-test,
+              job_name: "linux-ubuntu24.04-cpu-py3.12-ppc64le / build-and-test,
               run_id: String(context.runId),
               run_attempt: context.runAttempt,
               workflow_name: context.workflow,
