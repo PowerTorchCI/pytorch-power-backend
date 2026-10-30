@@ -65,31 +65,36 @@ jobs:
           SHA="$(git rev-parse HEAD)"
           echo "Testing upstream PyTorch commit: ${SHA}"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-
+          
       - name: Log nightly CI summary
         shell: bash
         run: |
+          echo "===== Operating System Details ====="
+          cat /etc/os-release
+          echo "===== RHEL Release ====="
+          cat /etc/redhat-release || true
+
+          echo "===== Kernel ====="
+          uname -a
+
+          echo "===== Architecture ====="
+          uname -m
+
           {
-            echo "## POWER CRCR Nightly"
-            echo ""
-            echo "- Upstream repository: pytorch/pytorch"
-            echo "- Upstream SHA: ${{ steps.upstream.outputs.sha }}"
-            echo "- Event: ${{ github.event_name }}"
-            echo "- Runner: ${{ runner.name }}"
-            echo "- Runner OS: ${{ runner.os }}"
-            echo "- Runner architecture: ${{ runner.arch }}"
-            echo "### Operating System Details"
-            echo '```'
-            cat /etc/os-release
-            echo ""
-            cat /etc/redhat-release 2>/dev/null || true
-            echo '```'
-            echo ""
-            echo "### Kernel and Architecture"
-            echo '```'
-            uname -a
-            uname -m
-            echo '```'
+          echo "## POWER CRCR Nightly"
+          echo ""
+          echo "- Upstream repository: pytorch/pytorch"
+          echo "- Upstream SHA: ${{ steps.upstream.outputs.sha }}"
+          echo "- Event: ${{ github.event_name }}"
+          echo "- Runner: ${{ runner.name }}"
+          echo "- Runner OS: ${{ runner.os }}"
+          echo "- Runner architecture: ${{ runner.arch }}"
+          echo ""
+          echo "### Operating System"
+          echo "- Distribution: $(. /etc/os-release && echo "$PRETTY_NAME")"
+          echo "- Version ID: $(. /etc/os-release && echo "$VERSION_ID")"
+          echo "- Architecture: $(uname -m)"
+          echo "- Kernel: $(uname -r)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create Python virtual environment
