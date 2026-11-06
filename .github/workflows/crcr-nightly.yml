@@ -109,8 +109,8 @@ jobs:
         shell: bash
         run: |
             python3 --version
-            python3-config --includes
-            python3-config --ldflags
+            #python3-config --includes
+            #python3-config --ldflags
             python3 -c "import sysconfig; print(sysconfig.get_config_vars())"
             ls -l /usr/include/python3.12/Python.h || true
             
