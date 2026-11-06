@@ -39,22 +39,24 @@ jobs:
           path: pytorch
           submodules: false
           fetch-depth: 1
-     
       - name: Initialize submodules
         shell: bash
         run: |
-          set -euo pipefail
-
+          set -euxo pipefail
           cd "$GITHUB_WORKSPACE/pytorch"
-
-          LOCK=".git/modules/android/libs/fbjni/shallow.lock"
-          if [[ -f "$LOCK" ]]; then
-            rm -f "$LOCK"
-          fi
-
           git submodule sync --recursive
+
+          # Clean potentially stale AITER submodule state
+          git submodule deinit -f -- third_party/aiter || true
+          rm -rf third_party/aiter
+          rm -rf .git/modules/third_party/aiter
+
+          # Initialize AITER explicitly
+          git submodule update --init --force --depth=1 third_party/aiter
+
+          # Initialize remaining submodules
           git submodule update --init --force --depth=1 --recursive
-          
+      
       - name: Resolve upstream SHA
         id: upstream
         shell: bash
