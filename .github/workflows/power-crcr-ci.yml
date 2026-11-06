@@ -99,6 +99,18 @@ jobs:
           ${{ toJson(github.event) }}
           ```
           SUMMARY
+          
+      - name: Install system build dependencies
+        shell: bash
+        run: |
+           set -euxo pipefail
+           sudo dnf install -y \
+           python3-devel \
+           gcc \
+           gcc-c++ \
+           gcc-gfortran \
+           make \
+           pkgconf-pkg-config
       
       - name: Create Python virtual environment
         shell: bash
@@ -107,11 +119,21 @@ jobs:
            cd pytorch
            python3 -m venv .venv
            . .venv/bin/activate
+           
            python3 -m pip install --upgrade pip setuptools wheel
            if [ -f requirements.txt ]; then
              python3 -m pip install -r requirements.txt
            fi
       
+      - name: Verify Python development environment
+        shell: bash
+        run: |
+            python3 --version
+            python3-config --includes
+            python3-config --ldflags
+            python3 -c "import sysconfig; print(sysconfig.get_config_vars())"
+            ls -l /usr/include/python3.12/Python.h || true
+            
       - name: Build PyTorch POWER Wheel
         id: build
         continue-on-error: true
