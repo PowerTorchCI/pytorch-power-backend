@@ -96,15 +96,24 @@ jobs:
       - name: Install system build dependencies
         shell: bash
         run: |
-           set -euxo pipefail
-           dnf install -y \
-           python3-devel \
-           gcc \
-           gcc-c++ \
-           gcc-gfortran \
-           make \
-           pkgconf-pkg-config
-           
+           # set -euxo pipefail
+           # dnf install -y \
+           # python3-devel \
+           # gcc \
+           # gcc-c++ \
+           # gcc-gfortran \
+           # make \
+           # pkgconf-pkg-config
+       
+      - name: Verify Python development environment
+        shell: bash
+        run: |
+            python3 --version
+            python3-config --includes
+            python3-config --ldflags
+            python3 -c "import sysconfig; print(sysconfig.get_config_vars())"
+            ls -l /usr/include/python3.12/Python.h || true
+            
       - name: Create Python virtual environment
         shell: bash
         run: |
@@ -121,15 +130,6 @@ jobs:
             python3 -m pip install -r requirements.txt
           fi
           
-      - name: Verify Python development environment
-        shell: bash
-        run: |
-            python3 --version
-            python3-config --includes
-            python3-config --ldflags
-            python3 -c "import sysconfig; print(sysconfig.get_config_vars())"
-            ls -l /usr/include/python3.12/Python.h || true
-      
       - name: Apply POWER VSX reduce_max patch
         id: patch
         shell: bash
