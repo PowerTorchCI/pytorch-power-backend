@@ -97,7 +97,7 @@ jobs:
         shell: bash
         run: |
             set -euxo pipefail
-            dnf install -y \
+            sudo dnf install -y \
             python3-devel \
             gcc \
             gcc-c++ \
