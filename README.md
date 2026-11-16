@@ -5,6 +5,8 @@ This repository contains the GitHub Actions workflow for building and testing Py
 ## Architecture Overview
 
 The CI/CD pipeline uses a hybrid approach to work around GitHub Actions' lack of native ppc64le runner support:
+For self hosted ppc64le runner, we created ubi 10 rhel based lxd conatiners using the gaplib repository. 
+https://github.com/ppc64le/gaplib
 
 ```
 GitHub Event (repository_dispatch from pytorch/pytorch)
@@ -14,12 +16,13 @@ Self Hosted PPC64 Machine
       │
       ├── Checkout this Downstream repo
       ├── Checkout PyTorch
-      ├── Build Power Whell and Run Tests
+      ├── Build PyTorch Power and Run Tests
       ├── Upload artifcats and test results
-      └── Report completed to HUD ✨
+      ├── Forward the result to Rhel Results Relay Page 
+      └── Report Forwarded to PyTorch HUD from RedHat Torched CI ✨
             │
             ▼
-      Results visible on https://hud.pytorch.org
+      Results visible on https://hud.pytorch.org/crcr/TorchedHat/pytorch-redhat-ci?event=nightly&days=7
 ```
 
 ## CRCR L2 Integration
