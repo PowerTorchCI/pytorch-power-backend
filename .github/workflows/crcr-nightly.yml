@@ -55,17 +55,17 @@ jobs:
               exit 1
             fi
 
-             extract_source_sha() {
+            extract_source_sha() {
                 local NIGHTLY_COMMIT="$1"
                 curl -fsSL \
                 "https://api.github.com/repos/${UPSTREAM_REPO}/commits/${NIGHTLY_COMMIT}" |
                 python3 -c '
-                import json, re, sys
-                message = json.load(sys.stdin)["commit"]["message"]
-                match = re.search(r"\(([a-f0-9]{40})\)", message)
-                if match:
-                  print(match.group(1))
-                  '
+            import json, re, sys
+            message = json.load(sys.stdin)["commit"]["message"]
+            match = re.search(r"\(([a-f0-9]{40})\)", message)
+            if match:
+                print(match.group(1))
+            '
             }
 
             SOURCE_SHA=$(extract_source_sha "$NIGHTLY_SHA")
