@@ -30,12 +30,55 @@ jobs:
       test_status: ${{ steps.tests.outputs.test_status }}
       upstream_sha: ${{ steps.upstream.outputs.sha }}
 
-    steps:
+    steps:      
+      - name: Resolve upstream PyTorch nightly SHA
+        id: upstream
+        shell: bash
+        env:
+          UPSTREAM_REPO: pytorch/pytorch
+          NIGHTLY_BRANCH: nightly
+        run: |
+            set -euo pipefail
+            echo "Fetching latest commits from ${UPSTREAM_REPO}/${NIGHTLY_BRANCH}"
+            NIGHTLY_COMMITS=$(curl -fsSL \
+                      "https://api.github.com/repos/${UPSTREAM_REPO}/commits?sha=${NIGHTLY_BRANCH}&per_page=2")
+            NIGHTLY_SHA=$(echo "$NIGHTLY_COMMITS" | jq -r '.[0].sha')
+            PREV_NIGHTLY_SHA=$(echo "$NIGHTLY_COMMITS" | jq -r '.[1].sha')
+
+            if [[ -z "$NIGHTLY_SHA" || "$NIGHTLY_SHA" == "null" ]]; then
+                echo "::error::Could not resolve latest nightly commit"
+                exit 1
+            fi
+
+            extract_source_sha() {
+                local NIGHTLY_COMMIT="$1"
+
+                curl -fsSL \
+                    "https://api.github.com/repos/${UPSTREAM_REPO}/commits/${NIGHTLY_COMMIT}" |
+                    jq -r '.commit.message' |
+                grep -oP '\([a-f0-9]{40}\)' |
+                head -1 |
+                tr -d '()'
+            }
+
+            SOURCE_SHA=$(extract_source_sha "$NIGHTLY_SHA")
+
+            if [[ ! "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+                echo "::error::Could not extract valid PyTorch source SHA"
+                exit 1
+            fi
+
+            echo "Nightly branch commit: $NIGHTLY_SHA"
+            echo "Resolved PyTorch source SHA: $SOURCE_SHA"
+
+            echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+            echo "nightly_sha=$NIGHTLY_SHA" >> "$GITHUB_OUTPUT"
+
       - name: Checkout upstream PyTorch
         uses: actions/checkout@v4
         with:
           repository: pytorch/pytorch
-          ref: main
+          ref: ${{ steps.upstream.outputs.sha }}
           path: pytorch
           submodules: false
           fetch-depth: 1
