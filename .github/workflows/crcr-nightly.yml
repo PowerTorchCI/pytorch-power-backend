@@ -42,13 +42,19 @@ jobs:
             echo "Fetching latest commits from ${UPSTREAM_REPO}/${NIGHTLY_BRANCH}"
             NIGHTLY_COMMITS=$(curl -fsSL \
                       "https://api.github.com/repos/${UPSTREAM_REPO}/commits?sha=${NIGHTLY_BRANCH}&per_page=2")
-            NIGHTLY_SHA=$(echo "$NIGHTLY_COMMITS" | jq -r '.[0].sha')
-            PREV_NIGHTLY_SHA=$(echo "$NIGHTLY_COMMITS" | jq -r '.[1].sha')
+            
+             NIGHTLY_SHA=$(python3 -c \
+              'import json,sys; print(json.load(sys.stdin)[0]["sha"])' <<< "$NIGHTLY_COMMITS")
 
-            if [[ -z "$NIGHTLY_SHA" || "$NIGHTLY_SHA" == "null" ]]; then
-                echo "::error::Could not resolve latest nightly commit"
-                exit 1
+             PREV_NIGHTLY_SHA=$(python3 -c \
+              'import json,sys; commits=json.load(sys.stdin); print(commits[1]["sha"] if len(commits)>1 else "")' \
+              <<< "$NIGHTLY_COMMITS")
+
+            if [[ ! "$NIGHTLY_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "::error::Could not resolve latest nightly commit"
+              exit 1
             fi
+
              extract_source_sha() {
                 local NIGHTLY_COMMIT="$1"
                 curl -fsSL \
