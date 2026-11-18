@@ -96,16 +96,6 @@ jobs:
           # Initialize all submodules
           git submodule update --init --force --recursive
       
-      - name: Resolve upstream SHA
-        id: upstream
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd pytorch
-
-          SHA="$(git rev-parse HEAD)"
-          echo "Testing upstream PyTorch commit: ${SHA}"
-          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           
       - name: Log nightly CI summary
         shell: bash
