@@ -49,23 +49,24 @@ jobs:
                 echo "::error::Could not resolve latest nightly commit"
                 exit 1
             fi
-
-            extract_source_sha() {
+             extract_source_sha() {
                 local NIGHTLY_COMMIT="$1"
-
                 curl -fsSL \
-                    "https://api.github.com/repos/${UPSTREAM_REPO}/commits/${NIGHTLY_COMMIT}" |
-                    jq -r '.commit.message' |
-                grep -oP '\([a-f0-9]{40}\)' |
-                head -1 |
-                tr -d '()'
+                "https://api.github.com/repos/${UPSTREAM_REPO}/commits/${NIGHTLY_COMMIT}" |
+                python3 -c '
+                import json, re, sys
+                message = json.load(sys.stdin)["commit"]["message"]
+                match = re.search(r"\(([a-f0-9]{40})\)", message)
+                if match:
+                  print(match.group(1))
+                  '
             }
 
             SOURCE_SHA=$(extract_source_sha "$NIGHTLY_SHA")
 
             if [[ ! "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
-                echo "::error::Could not extract valid PyTorch source SHA"
-                exit 1
+              echo "::error::Could not extract valid PyTorch source SHA"
+              exit 1
             fi
 
             echo "Nightly branch commit: $NIGHTLY_SHA"
@@ -73,6 +74,7 @@ jobs:
 
             echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
             echo "nightly_sha=$NIGHTLY_SHA" >> "$GITHUB_OUTPUT"
+
 
       - name: Checkout upstream PyTorch
         uses: actions/checkout@v4
